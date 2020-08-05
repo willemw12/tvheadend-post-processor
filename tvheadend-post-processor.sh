@@ -97,7 +97,7 @@ is_false() {
 unset TRAP_MSG_PRINTED
 
 print_trap_msg() {
-  if [ ! -v TRAP_MSG_PRINTED ]; then
+  if [ $? -ne 0 ] && [ ! -v TRAP_MSG_PRINTED ]; then
     printf "%s: error, while running as user '%s'\n" "${0##*/}" "$(whoami)"
     TRAP_MSG_PRINTED=""
   fi
@@ -108,7 +108,7 @@ set_trap() {
   ##trap "printf \"%s: error, while running as user '%s'\n\" \"${0##*/}\" \"$USER\"" ERR
   #trap 'printf "%s: error, while running as user \"%s\"\n" "${0##*/}" "$USER"' ERR
 
-  trap 'print_trap_msg' ERR
+  trap 'print_trap_msg' EXIT
 }
 
 set_trap
