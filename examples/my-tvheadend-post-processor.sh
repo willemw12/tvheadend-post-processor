@@ -1,85 +1,160 @@
 #!/usr/bin/env bash
 
-# A simple wrapper example script for dealing with channel specific transcoding options.
-# It uses the Tvheadend's post-processor format string "%c" to achieve this.
+# An example post-processor wrapper script that can:
+#
+#   - skip post-processing of specific programmes and/or channels
+#   - set specific post-processing options per channel or a set of channels
+#   - ...
 #
 # https://github.com/willemw12/tvheadend-post-processor, GPLv3
-#
-#
-# For example:
-#    - Record in 720p by default, except when the channel name ends on " HD" and
-#    - Crop away white dashes at the top the recording for one specific channel
-#
-# Setup:
-#   - In Tvheadend's web interface menu "Configuration" --> "Recording":
-#       Post-processor command = my-tvheadend-post-processor.sh --keep-recording "%e" "%f" "%c"
-#
-#   - Define default transcoding options:
-#       File /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor.conf:
-#           ...
-#           OPTIONS=(--deinterlace --crop=0:0:0:0 --preset="Very Fast 720p30")
-#
-#   - Either define channel specific transcoding options in separate config files:
-#       File /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor-1080p.conf:
-#           ...
-#           OPTIONS=(--deinterlace --crop=0:0:0:0 --preset="Very Fast 1080p30")
-#
-#       File /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor-crop.conf:
-#           ...
-#           OPTIONS=(--deinterlace --crop=1:0:0:0 --preset="Very Fast 720p30")
-#
-#       Pass the channel specific config file as command line argument in the case-statement below (commented out).
-#
-#   - or pass the channel specific options directly as command line arguments in the case-statement below.
-
-#CMD=tvheadend-post-processor-queue.sh
-CMD=tvheadend-post-processor.sh
 
 ####
 
-help() {
-  printf "See setup comments in this script\n" >&2
+# Example: manage channel specific post-processing options:
+#
+#   Configuration:
+#
+#     - Record in 720p by default, except when the channel name ends on ' HD'.
+#     - Crop away white dashes at the top the recording for one specific channel.
+#
+#   Setup for that configuration:
+#
+#     - In Tvheadend's web interface menu "Configuration" --> "Recording":
+#         Post-processor command = my-tvheadend-post-processor.sh "%e" "%f" "%c"
+#
+#       Note the additional "channel name" format string "%c" at the end.
+#
+#     - Define default post-processing options:
+#         File /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor.conf:
+#             ...
+#             options=(--deinterlace --crop=0:0:0:0 --preset='Very Fast 720p30')
+#
+#     - Either define specific post-processing options in separate config files:
+#         File /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor-1080p.conf:
+#             ...
+#             options=(--deinterlace --crop=0:0:0:0 --preset='Very Fast 1080p30')
+#
+#         File /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor-crop.conf:
+#             ...
+#             options=(--deinterlace --crop=1:0:0:0 --preset='Very Fast 720p30')
+#
+#         Pass the specific config file as command line argument in the case-statement as shown below (commented out).
+#
+#     - or pass the specific options directly as command line arguments in the case-statement as shown below.
+
+####
+
+# Here are some pattern matching examples containing space characters and wildcard characters (* and ?):
+#
+#     hd_channel_names='BBC * HD'
+#
+#     case "$channel_name" in
+#       $hd_channel_names)
+#         ...
+#         ;;
+#       'BBC '*' HD')
+#         ...
+#         ;;
+#       BBC\ ?\ HD)
+#         ...
+#         ;;
+
+script=tvheadend-post-processor.sh
+
+main() {
+  if (($# < 3)); then
+    printf '%s: argument(s) missing\n' "${0##*/}" >&2
+    error_help
+    exit 1
+  fi
+
+  args=("$@")
+
+  # Get last argument
+  channel_name="${args[-1]}"
+
+  # Get second last argument
+  recording_fullname="${args[-2]}"
+
+  recording_name="${recording_fullname##*/}"
+
+  ####
+
+  # Skip post-processing of specific programmes
+  case "$recording_name" in
+    # Skip a programme
+    'BBC News at One-'*'.ts')
+      skip_postpro "$recording_fullname"
+      ;;
+
+    # Skip programmes on specific channels
+    'BBC News'*'-'*'.ts')
+      if [[ "$channel_name" == 'BBC '*' HD' ]]; then
+        skip_postpro "$recording_fullname"
+      fi
+      ;;
+  esac
+
+  # Skip post-processing of specific channels
+  case "$channel_name" in
+    # Skip a channel
+    'BBC One')
+      skip_postpro "$recording_fullname"
+      ;;
+
+    # Skip channels
+    'BBC '*' HD' | 'BBC Two')
+      skip_postpro "$recording_fullname"
+      ;;
+  esac
+
+  ####
+
+  # Set default options
+  options=()
+
+  # Add or set specific post-processing options for programmes
+  #case "$recording_name" in
+  #  ...
+  #esac
+
+  # Add or set specific post-processing options for channels
+  case "$channel_name" in
+    'BBC One' | 'BBC Two')
+      #options+=(--config=tvheadend-post-processor-crop.conf)
+      options+=(--option=crop=1:0:0:0)
+      ;;
+
+    *' HD')
+      #options+=(--config=tvheadend-post-processor-1080p.conf)
+      options+=(--option='preset=Very Fast 1080p30')
+      ;;
+
+    -h | --help)
+      error_help
+      exit 0
+      ;;
+
+    *)
+      #options=()
+      ;;
+  esac
+
+  # Run script
+  $script "${options[@]}" "$@"
 }
 
-if [ $# -lt 3 ]; then
-  printf "%s: argument(s) missing\n" "$(basename "$0")" >&2
-  help
-  exit 1
-fi
+####
 
-USER="$(whoami)"
-if [ "$USER" != "hts" ]; then
-  printf "%s: must be user 'hts' to run this script\n" "$(basename "$0")" >&2
-  help
-  exit 1
-fi
+error_help() {
+  printf 'See setup comments in this script.\n' >&2
+}
 
-POSPARAMS=("$@")
-# Last parameter
-CHANNEL_NAME="${POSPARAMS[${#POSPARAMS[@]}-1]}"
+skip_postpro() {
+  printf "Skip post-processing file '%s'\n" "$1"
+  exit 0
+}
 
-#HD_CHANNEL_NAMES="BBC * HD"
+####
 
-case "$CHANNEL_NAME" in
-  # Examples containing space and wildcard characters (* and ?):
-  #     BBC\ ?\ HD)
-  #     "BBC "*" HD")
-  #     $HD_CHANNEL_NAMES)
-
-  *\ HD)
-    #$CMD --keep-recording --config=tvheadend-post-processor-1080p.conf "$@"
-    $CMD --keep-recording --option="preset=Very Fast 1080p30" "$@"
-    ;;
-  Example\ channel\ name)
-    #$CMD --keep-recording --config=tvheadend-post-processor-crop.conf "$@"
-    $CMD --keep-recording --option="crop=1:0:0:0" "$@"
-    ;;
-  -h|--help)
-    help
-    ;;
-  *)
-    # Default
-    $CMD "$@"
-    #;;
-esac
-
+main "$@"

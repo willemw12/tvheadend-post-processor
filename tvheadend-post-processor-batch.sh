@@ -1,82 +1,136 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 # Start or redo transcodings manually from outside Tvheadend.
 # This is not a post-processor script for Tvheadend.
 #
-# This script depends on: getopt (util-linux), sudo.
+# This bash script depends on: getopt (util-linux) and tvheadend-post-processor.sh dependencies.
 #
 # https://github.com/willemw12/tvheadend-post-processor, GPLv3
 
+# shellcheck disable=SC2016
 usage() {
-  printf "Usage: %s [-c, --config CONFIG] [-d, --recording-path PATH] [-f, --force-overwrite] [-p, --post-processor SCRIPT] RECORDING_FILES\n\n" "${0##*/}" >&2
-  printf "Transcode RECORDING_FILES from outside Tvheadend.\n\n"
-  printf "Recording files are not deleted after transcoding.\n" >&2
-  printf "The post-processor scripts are run by user 'hts'.\n"
+  printf 'USAGE:
+  %s [OPTIONS]... RECORDING_FILE...
+
+OPTIONS:
+      --channel CHANNEL
+  -c, --config CONFIG
+  -f, --force-overwrite
+  -o, --option HANDBRAKE_OPTION ...
+  -q, --queue-transcoding
+  -p, --post-processor SCRIPT
+      --skip-user-check
+  -w, --transcoding-path PATH
+
+  For more details, run: tvheadend-post-processor.sh --help.
+
+DESCRIPTION:
+  Transcode recording files from outside Tvheadend.
+  Recording files are not deleted after transcoding.
+  The user that runs this script should be the same as the Tvheadend'\''s user, usually "hts" or "tvheadend".
+
+EXAMPLES:
+  sudo -u hts tvheadend-post-processor-batch.sh --config="$(pwd)/my-tvheadend-post-processor.conf" '\''recording1.ts'\''
+  sudo -u hts tvheadend-post-processor-batch.sh --option=deinterlace --option=crop=0:0:0:0 --option='\''preset=Very Fast 1080p30'\'' '\''recording1.ts'\''
+  sudo -u hts tvheadend-post-processor-batch.sh --user=tvheadend --force-overwrite /path/to/*.ts\n\n' "${0##*/}"
 }
 
-help() {
+error_help() {
   printf "Try '%s --help' for more information.\n" "${0##*/}" >&2
 }
 
-unset CONFIG_OPT
-unset FORCE_OVERWRITE_OPT
-#unset RECORDINGDIR
-unset RECORDINGDIR_OPT
-POSTPROSCRIPT=tvheadend-post-processor.sh
-if ! GETOPT_CMD="$(getopt --options c:d:fhp: --longoptions config:,force-overwrite,help,post-processor:,recording-path: --name "${0##*/}" -- "$@")"; then
-  #printf "%s: getopt internal error\n" "${0##*/}>&2
-  help
+# This script does not delete any recording file (keeps current recording file and disables cleanup of old recording files).
+# Leave the cleanup of recording files up to the regular script: tvheadend-post-processor.sh [CLEANUP]
+options=(--delete-recordings-after-days=0 --keep-recording --show-progress)
+
+unset channel_name
+unset handbrake_options
+unset skip_user_check
+
+postproscript=tvheadend-post-processor.sh
+
+# Reuse the main post-processing script's queue
+# Assumption: TMPDIR is the same value as in main post-processing script
+TMPDIR="${TMPDIR:-/tmp}"
+[ -v QUEUE_LOCKFILE ] || QUEUE_LOCKFILE="$TMPDIR/${postproscript##*/}.lock"
+export QUEUE_LOCKFILE
+
+if ! getopt_cmd="$(getopt --options c:fho:p:qu:w: --longoptions channel:,config:,force-overwrite,help,option:,post-processor:,queue-transcoding,skip-user-check,transcoding-path:,user: --name "${0##*/}" -- "$@")"; then
+  #printf '%s: getopt internal error\n' "${0##*/}>&2
+  error_help
   exit 1
 fi
-eval set -- "$GETOPT_CMD"
+eval set -- "$getopt_cmd"
 while true; do
   case "$1" in
-    -c|--config)
-      CONFIG_OPT="--config=$2"; shift 2;;
-    -d|--recording-path)
-      #RECORDINGDIR_OPT="--recording-path=$2"; RECORDINGDIR="$2"; shift 2;;
-      RECORDINGDIR_OPT="--recording-path=$2"; shift 2;;
-    -f|--force-overwrite)
-      FORCE_OVERWRITE_OPT="--force-overwrite"; shift;;
-    -h|--help)
-      usage; exit 0;;
-    -p|--post-processor)
-      POSTPROSCRIPT="$(command -v "$2")"; shift 2;;
+    -f | --force-overwrite | -q | --queue-transcoding)
+      options+=("$1")
+      shift
+      ;;
+    -c | --config | -w | --transcoding-path)
+      options+=("$1=$2")
+      shift 2
+      ;;
+    --channel)
+      channel_name="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -o | --option)
+      if [ "${2:0:1}" = '-' ]; then
+        handbrake_options+=("$2")
+      else
+        # Add missing - or -- before option value
+        if [ "${2:1:1}" = '' ]; then
+          handbrake_options+=("-$2")
+        else
+          handbrake_options+=("--$2")
+        fi
+      fi
+      shift 2
+      ;;
+    -p | --post-processor)
+      postproscript="$(command -v "$2")"
+      shift 2
+      ;;
+    --skip-user-check)
+      skip_user_check=1
+      shift
+      ;;
     --)
-      shift; break;;
+      shift
+      break
+      ;;
     *)
-      printf "%s: getopt internal error\n" "${0##*/}" >&2; help; exit 1
+      printf '%s: getopt internal error\n' "${0##*/}" >&2
+      error_help
+      exit 1
+      ;;
   esac
 done
+((skip_user_check)) && options+=(--skip-user-check)
 
-# Avoid sudo timeout when run as non-root user
-if [ "$(id -ru)" -ne 0 ]; then
-  printf "%s: must be 'root' user to run this script\n" "${0##*/}" >&2
-  help
+# Check user here only once, instead of possibly multiple times inside the loop below
+USER="$(whoami)"
+if ((!skip_user_check)) && [ "$USER" != hts ] && [ "$USER" != tvheadend ]; then
+  printf '%s: must be "hts" or "tvheadend" user to run this script\n' "${0##*/}" >&2
+  error_help
   exit 1
 fi
 
-if [ $# -lt 1 ]; then
-  printf "%s: argument(s) missing\n" "${0##*/}" >&2
-  help
+if (($# < 1)); then
+  printf '%s: argument(s) missing\n' "${0##*/}" >&2
+  error_help
   exit 1
 fi
-
-#if [ -v RECORDINGDIR ]; then
-#  for DIR in "$RECORDINGDIR/"{,"$VIDEO_PATH","$BACKUP_PATH"}; do
-#    mkdir -p "$DIR"
-#    chmod g+w "$DIR"
-#    chown hts:video "$DIR"
-#  done
-#fi
 
 # Stop the script when pressing Ctrl-c to cancel
-trap "exit" INT
+trap 'exit' INT
 
 while [ -n "$1" ]; do
-  # shellcheck disable=SC2086
-  # Do not delete any recording file (keep current recording file and disable cleanup of old recording files)
-  sudo --user=hts "$POSTPROSCRIPT" --keep-recording --delete-recordings-after-days=0 --show-progress $CONFIG_OPT $FORCE_OVERWRITE_OPT $RECORDINGDIR_OPT OK "$1"    # || exit
+  "$postproscript" "${options[@]}" "${handbrake_options[@]}" OK "$1" "$channel_name" # || exit
   shift
 done
-

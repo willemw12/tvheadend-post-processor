@@ -1,7 +1,7 @@
-Tvheadend post-processor/post-processing scripts
-================================================
+Tvheadend post-processing scripts
+=================================
 
-Automatically transcode [Tvheadend](https://tvheadend.org/projects/tvheadend) recording files to smaller video files using HandBrake.
+Automatically transcode [Tvheadend](https://tvheadend.org/projects/tvheadend) recording files to smaller video files using the [HandBrake](https://handbrake.fr) command line tool.
 
 
 Features
@@ -12,6 +12,7 @@ Features
 - Delete kept recording files older than a specified number of days
 - Verify transcoded video files using ffmpeg
 - Configure HandBrake settings (crop, deinterlace, preset, ...)
+- Run transcodings sequentially instead of in parallel
 - Run pre-transcoding and post-transcoding scripts
 
 
@@ -21,7 +22,7 @@ Main scripts
 - tvheadend-post-processor.sh
 
   Transcode a recording file to a video file.
-  The script is invoked from Tvheadend.
+  This script is invoked from Tvheadend.
 
 - tvheadend-post-processor-batch.sh
 
@@ -32,16 +33,17 @@ Main scripts
 Additional scripts
 ------------------
 
-- tvheadend-post-processor-queue.sh
-
-  A variant of the main tvheadend-post-processor.sh script, which uses task-spooler to run transcodings sequentially instead of in parallel.
-  The script is invoked from Tvheadend.
-
-  Use of the main tvheadend-post-processor.sh script instead is recommended. The main script already runs with low process priority and I/O priority.
-
 - examples/my-tvheadend-post-processor.sh
 
-  An example script that shows how to set specific transcoding options per channel or a set of channels.
+  An example post-processor wrapper script that can:
+
+    - skip post-processing of specific programmes and/or channels
+    - set specific post-processing options per channel or a set of channels
+    - ...
+
+- examples/pre-scripts.d/10-pre-script.sh
+
+  An example pre-transcoding script.
 
 
 Dependencies
@@ -49,15 +51,7 @@ Dependencies
 
 Common dependencies:
 
-- bash, ffmpeg, getopt (util-linux), handbrake-cli
-
-For tvheadend-post-processor-batch.sh also:
-
-- sudo
-
-For tvheadend-post-processor-queue.sh also:
-
-- task-spooler
+- `awk`, `bash`, `ffmpeg`, `flock` and `getopt` (package `util-linux`), `handbrake-cli`
 
 
 Installation
@@ -68,7 +62,9 @@ Download the scripts:
     git clone https://github.com/willemw12/tvheadend-post-processor.git
     cd tvheadend-post-processor
 
-Copy the scripts to a location accessible to Tvheadend's 'hts' user. For example, in one of its $PATH paths:
+The script(s) to be used by Tvheadend should be accessible to the Tvheadend user, usually "hts" or "tvheadend".
+
+Optionally, copy the relevant scripts to another location, for example:
 
     sudo cp tvheadend-post-processor*.sh /usr/local/bin/
 
@@ -76,24 +72,43 @@ Copy the scripts to a location accessible to Tvheadend's 'hts' user. For example
 Configuration
 -------------
 
-Configure the Tvheadend's web interface to use one of the scripts. From the main page, go to
-"Configuration" and then to "Recording". Set "Post-processor command" to, for example:
+### Set the post-processor command
 
-    tvheadend-post-processor.sh --keep-recording "%e" "%f"
+From the main page of the Tvheadend's web interface, go to "Configuration" and then to "Recording".
+Change "View level" to "Expert" or "Advanced". Set "Post-processor command", including at least
+the following two arguments:
 
-To change the default configuration, edit the configuration file, which is located at /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor.conf.
+    tvheadend-post-processor.sh "%e" "%f"
 
-To create the default configuration file manually, run:
+An initial default configuration file is created by the script during the first post-processing.
+To create the initial default configuration file manually, run, for example:
 
     sudo -u hts tvheadend-post-processor.sh
+
+The default configuration file location for this user is /home/hts/.config/tvheadend-post-processor/tvheadend-post-processor.conf.
+
+### Change the default configuration
+
+Optionally, change some of the settings in the configuration file:
+
+    KEEP_RECORDING=no
+    TRANSCODING_PATH=/path/to/a/writable-folder
+    # Uncomment to change or rename the video files folder
+    #VIDEO_PATH=/path/to/a/writable-folder
+
+and/or with command options:
+
+    tvheadend-post-processor.sh --no-keep-recording --transcoding-path=/path/to/a/writable-folder "%e" "%f"
 
 
 Help
 ----
 
-For more information, run:
+For more detailed information, run:
 
     ./tvheadend-post-processor.sh --help
+
+and see also the generated configuration file.
 
 
 License
